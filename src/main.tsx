@@ -107,6 +107,17 @@ type PolicyRecord = {
   copy: string;
 };
 
+type AppState = {
+  assets: AssetRecord[];
+  accessRequests: AccessRequest[];
+  transfers: TransferRecord[];
+  receipts: ReceiptRecord[];
+  audit: AuditRecord[];
+  policies: PolicyRecord[];
+  selectedAssetId: string;
+  proofBundle: string;
+};
+
 const nav: Array<[Page, typeof Hexagon]> = [
   ["Overview", Hexagon],
   ["Mint", Box],
@@ -325,6 +336,8 @@ function App() {
   const [accessRequester, setAccessRequester] = useState<"Alice" | "Bob" | "Mallory">("Bob");
   const [transferTo, setTransferTo] = useState<"Alice" | "Bob" | "Controller">("Alice");
   const [proofBundle, setProofBundle] = useStoredState("caputxo.proofBundle", "");
+  const [apiStatus, setApiStatus] = useState<"Connecting" | "API synced" | "Browser local">("Connecting");
+  const [apiHydrated, setApiHydrated] = useState(false);
 
   const selectedAsset = assets.find((asset) => asset.id === selectedAssetId) ?? assets[0];
   const selectedPolicy = policies.find((policy) => policy.id === selectedMode) ?? policies[0];
@@ -332,6 +345,58 @@ function App() {
     () => assets.filter((asset) => `${asset.name} ${asset.hash} ${asset.owner}`.toLowerCase().includes(query.toLowerCase())),
     [assets, query],
   );
+
+  const stateSnapshot: AppState = useMemo(
+    () => ({ assets, accessRequests, transfers, receipts, audit, policies, selectedAssetId, proofBundle }),
+    [assets, accessRequests, transfers, receipts, audit, policies, selectedAssetId, proofBundle],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/state")
+      .then((response) => {
+        if (!response.ok) throw new Error("API unavailable");
+        return response.json() as Promise<AppState>;
+      })
+      .then((state) => {
+        if (cancelled) return;
+        setAssets(state.assets ?? initialAssets);
+        setAccessRequests(state.accessRequests ?? initialAccess);
+        setTransfers(state.transfers ?? initialTransfers);
+        setReceipts(state.receipts ?? initialReceipts);
+        setAudit(state.audit ?? initialAudit);
+        setPolicies(state.policies ?? initialPolicies);
+        setSelectedAssetId(state.selectedAssetId ?? initialAssets[0].id);
+        setProofBundle(state.proofBundle ?? "");
+        setApiStatus("API synced");
+      })
+      .catch(() => {
+        if (!cancelled) setApiStatus("Browser local");
+      })
+      .finally(() => {
+        if (!cancelled) setApiHydrated(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [setAccessRequests, setAssets, setAudit, setPolicies, setProofBundle, setReceipts, setSelectedAssetId, setTransfers]);
+
+  useEffect(() => {
+    if (!apiHydrated || apiStatus !== "API synced") return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      fetch("/api/state", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(stateSnapshot),
+        signal: controller.signal,
+      }).catch(() => setApiStatus("Browser local"));
+    }, 250);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [apiHydrated, apiStatus, stateSnapshot]);
 
   const runCommandSearch = () => {
     const normalized = query.trim().toLowerCase();
@@ -539,6 +604,7 @@ function App() {
       generateProof,
       proofBundle,
       resetSimulation,
+      apiStatus,
       audit,
       setPage,
     };
@@ -659,6 +725,7 @@ function App() {
           <span>Assets <strong>{assets.length}</strong></span>
           <span>Open Transfers <strong>{transfers.filter((item) => item.status !== "Finalized").length}</strong></span>
           <span>Receipts <strong>{receipts.length}</strong></span>
+          <span>Storage <strong>{apiStatus}</strong></span>
           <span>Protocol <strong>CapUTXO v1.0</strong></span>
           <span className="ops"><span className="status-dot" /> All Systems Operational</span>
         </footer>
@@ -701,6 +768,7 @@ type PageProps = {
   generateProof: () => void;
   proofBundle: string;
   resetSimulation: () => void;
+  apiStatus: "Connecting" | "API synced" | "Browser local";
   audit: AuditRecord[];
   setPage: (page: Page) => void;
 };
@@ -1126,12 +1194,13 @@ function KeysPage({ selectedAsset, policies }: PageProps) {
   );
 }
 
-function SettingsPage({ resetSimulation, assets, receipts, transfers, audit }: PageProps) {
+function SettingsPage({ resetSimulation, assets, receipts, transfers, audit, apiStatus }: PageProps) {
   return (
     <section className="page-grid two">
       <Panel title="Workspace Settings" icon={<Settings size={18} />} className="tool-panel">
         <div className="form-grid">
           <KeyValue label="Persistence" value="Local Browser" pill />
+          <KeyValue label="Gateway" value={apiStatus} />
           <KeyValue label="Assets" value={String(assets.length)} />
           <KeyValue label="Receipts" value={String(receipts.length)} />
           <KeyValue label="Transfers" value={String(transfers.length)} />

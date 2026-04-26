@@ -28,4 +28,12 @@ export default [
       "react-refresh/only-export-components": "off",
     },
   },
+  {
+    files: ["server/**/*.mjs"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: globals.node,
+    },
+  },
 ];

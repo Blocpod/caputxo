@@ -16,6 +16,22 @@ npm install
 npm run dev
 ```
 
+For the API-backed prototype, run the gateway and the web app in separate terminals:
+
+```bash
+npm run dev:api
+npm run dev
+```
+
+The gateway exposes:
+
+- `GET /api/health`
+- `GET /api/state`
+- `PUT /api/state`
+- `POST /api/reset`
+
+Local API state is stored in `data/caputxo-state.json` and is intentionally ignored by git. If the gateway is not running, the app falls back to browser-local persistence.
+
 ## Production Build
 
 ```bash
