@@ -1,4 +1,4 @@
-import { StrictMode, useMemo, useState } from "react";
+import { StrictMode, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
@@ -33,11 +33,11 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
-type Page = "Overview" | "Mint" | "Assets" | "Access" | "Transfers" | "Receipts" | "Policies" | "Audit";
+type Page = "Overview" | "Mint" | "Assets" | "Access" | "Transfers" | "Receipts" | "Policies" | "Audit" | "Identities" | "Keys" | "Settings";
 type TransferStep = "prepare" | "precommit" | "transfer" | "finalize";
 type AccessMode = "LOCAL_DECRYPT_DEMO" | "CONTROLLED_VIEWER_MVP" | "TEE_THRESHOLD_FUTURE";
 type AssetStatus = "Active" | "Pending" | "Frozen";
-type ReceiptKind = "Access Granted" | "Access Denied" | "Transfer Finalized" | "Asset Minted" | "Policy Updated";
+type ReceiptKind = "Access Granted" | "Access Denied" | "Transfer Finalized" | "Asset Minted" | "Policy Updated" | "Asset Status Updated" | "Proof Generated";
 
 type AssetRecord = {
   id: string;
@@ -118,11 +118,11 @@ const nav: Array<[Page, typeof Hexagon]> = [
   ["Audit", Braces],
 ];
 
-const systemNav = [
+const systemNav: Array<[Page, typeof Fingerprint]> = [
   ["Identities", Fingerprint],
   ["Keys", KeyRound],
   ["Settings", Settings],
-] as const;
+];
 
 const steps: Array<{ id: TransferStep; label: string; detail: string }> = [
   { id: "prepare", label: "Prepare", detail: "Policy & terms" },
@@ -290,23 +290,41 @@ const copyText = async (value: string) => {
   }
 };
 
+function useStoredState<T>(key: string, initialValue: T) {
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const stored = window.localStorage.getItem(key);
+      return stored ? (JSON.parse(stored) as T) : initialValue;
+    } catch {
+      return initialValue;
+    }
+  });
+
+  useEffect(() => {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  }, [key, value]);
+
+  return [value, setValue] as const;
+}
+
 function App() {
   const [page, setPage] = useState<Page>("Overview");
   const [query, setQuery] = useState("");
   const [step, setStep] = useState<TransferStep>("transfer");
   const [selectedMode, setSelectedMode] = useState<AccessMode>("CONTROLLED_VIEWER_MVP");
-  const [assets, setAssets] = useState(initialAssets);
-  const [accessRequests, setAccessRequests] = useState(initialAccess);
-  const [transfers, setTransfers] = useState(initialTransfers);
-  const [receipts, setReceipts] = useState(initialReceipts);
-  const [audit, setAudit] = useState(initialAudit);
-  const [policies, setPolicies] = useState(initialPolicies);
-  const [selectedAssetId, setSelectedAssetId] = useState(initialAssets[0].id);
+  const [assets, setAssets] = useStoredState("caputxo.assets", initialAssets);
+  const [accessRequests, setAccessRequests] = useStoredState("caputxo.accessRequests", initialAccess);
+  const [transfers, setTransfers] = useStoredState("caputxo.transfers", initialTransfers);
+  const [receipts, setReceipts] = useStoredState("caputxo.receipts", initialReceipts);
+  const [audit, setAudit] = useStoredState("caputxo.audit", initialAudit);
+  const [policies, setPolicies] = useStoredState("caputxo.policies", initialPolicies);
+  const [selectedAssetId, setSelectedAssetId] = useStoredState("caputxo.selectedAssetId", initialAssets[0].id);
   const [mintName, setMintName] = useState("new_capability_asset.enc");
   const [mintOwner, setMintOwner] = useState<"Alice" | "Bob" | "Controller">("Alice");
   const [mintMode, setMintMode] = useState<AccessMode>("CONTROLLED_VIEWER_MVP");
   const [accessRequester, setAccessRequester] = useState<"Alice" | "Bob" | "Mallory">("Bob");
   const [transferTo, setTransferTo] = useState<"Alice" | "Bob" | "Controller">("Alice");
+  const [proofBundle, setProofBundle] = useStoredState("caputxo.proofBundle", "");
 
   const selectedAsset = assets.find((asset) => asset.id === selectedAssetId) ?? assets[0];
   const selectedPolicy = policies.find((policy) => policy.id === selectedMode) ?? policies[0];
@@ -314,6 +332,21 @@ function App() {
     () => assets.filter((asset) => `${asset.name} ${asset.hash} ${asset.owner}`.toLowerCase().includes(query.toLowerCase())),
     [assets, query],
   );
+
+  const runCommandSearch = () => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return;
+    const pageMatch = [...nav, ...systemNav].find(([label]) => label.toLowerCase().startsWith(normalized));
+    if (pageMatch) {
+      setPage(pageMatch[0]);
+      return;
+    }
+    const assetMatch = assets.find((asset) => `${asset.name} ${asset.hash} ${asset.owner}`.toLowerCase().includes(normalized));
+    if (assetMatch) {
+      setSelectedAssetId(assetMatch.id);
+      setPage("Assets");
+    }
+  };
 
   const addAudit = (event: string, actor: string, target: string, result: AuditRecord["result"]) => {
     setAudit((items) => [{ id: makeId("aud"), event, actor, target, result, time: nowLabel() }, ...items]);
@@ -435,6 +468,42 @@ function App() {
     addAudit("Policy Updated", "Controller", id, "Updated");
   };
 
+  const updateAssetStatus = (id: string, status: AssetStatus) => {
+    setAssets((items) => items.map((asset) => (asset.id === id ? { ...asset, status } : asset)));
+    addReceipt({ kind: "Asset Status Updated", assetId: id, subject: status, ok: status !== "Frozen", policy: selectedAsset.mode, trace: `asset status set to ${status}` });
+    addAudit("Asset Status Updated", "Controller", id, "Updated");
+  };
+
+  const generateProof = () => {
+    const bundle = {
+      generatedAt: nowLabel(),
+      network: "BSV Testnet",
+      selectedAsset: selectedAsset.id,
+      assetHash: selectedAsset.hash,
+      currentOutpoint: selectedAsset.outpoint,
+      currentOwner: selectedAsset.owner,
+      epoch: selectedAsset.epoch,
+      receipts: receipts.filter((receipt) => receipt.assetId === selectedAsset.id).slice(0, 8),
+    };
+    const serialized = JSON.stringify(bundle, null, 2);
+    setProofBundle(serialized);
+    copyText(serialized);
+    addReceipt({ kind: "Proof Generated", assetId: selectedAsset.id, subject: selectedAsset.name, ok: true, policy: selectedAsset.mode, trace: "proof bundle assembled and copied" });
+    addAudit("Proof Generated", "Controller", selectedAsset.id, "Recorded");
+  };
+
+  const resetSimulation = () => {
+    setAssets(initialAssets);
+    setAccessRequests(initialAccess);
+    setTransfers(initialTransfers);
+    setReceipts(initialReceipts);
+    setAudit(initialAudit);
+    setPolicies(initialPolicies);
+    setSelectedAssetId(initialAssets[0].id);
+    setProofBundle("");
+    setPage("Overview");
+  };
+
   const renderPage = () => {
     const props = {
       step,
@@ -466,6 +535,10 @@ function App() {
       receipts,
       policies,
       togglePolicy,
+      updateAssetStatus,
+      generateProof,
+      proofBundle,
+      resetSimulation,
       audit,
       setPage,
     };
@@ -484,6 +557,12 @@ function App() {
         return <PoliciesPage {...props} />;
       case "Audit":
         return <AuditPage {...props} />;
+      case "Identities":
+        return <IdentitiesPage {...props} />;
+      case "Keys":
+        return <KeysPage {...props} />;
+      case "Settings":
+        return <SettingsPage {...props} />;
       default:
         return <OverviewPage {...props} />;
     }
@@ -516,7 +595,7 @@ function App() {
         <nav className="nav-block system" aria-label="System">
           <span className="nav-kicker">System</span>
           {systemNav.map(([label, Icon]) => (
-            <button className="nav-item" key={label}>
+            <button className={page === label ? "nav-item active" : "nav-item"} key={label} onClick={() => setPage(label)}>
               <Icon size={18} />
               {label}
             </button>
@@ -542,7 +621,15 @@ function App() {
           </button>
           <label className="search">
             <Search size={18} />
-            <input aria-label="Search command" placeholder="Search assets, owners, hashes..." value={query} onChange={(event) => setQuery(event.target.value)} />
+            <input
+              aria-label="Search command"
+              placeholder="Search assets, pages, owners, hashes..."
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") runCommandSearch();
+              }}
+            />
             <kbd>⌘K</kbd>
           </label>
           <div className="top-actions">
@@ -610,6 +697,10 @@ type PageProps = {
   receipts: ReceiptRecord[];
   policies: PolicyRecord[];
   togglePolicy: (id: AccessMode) => void;
+  updateAssetStatus: (id: string, status: AssetStatus) => void;
+  generateProof: () => void;
+  proofBundle: string;
+  resetSimulation: () => void;
   audit: AuditRecord[];
   setPage: (page: Page) => void;
 };
@@ -801,7 +892,7 @@ function MintPage({ mintName, setMintName, mintOwner, setMintOwner, mintMode, se
   );
 }
 
-function AssetsPage({ visibleAssets, selectedAssetId, setSelectedAssetId, setPage }: PageProps) {
+function AssetsPage({ visibleAssets, selectedAssetId, selectedAsset, setSelectedAssetId, setPage, updateAssetStatus }: PageProps) {
   return (
     <section className="page-grid">
       <Panel title="Asset Registry" icon={<DatabaseZap size={18} />} className="wide-panel">
@@ -816,10 +907,18 @@ function AssetsPage({ visibleAssets, selectedAssetId, setSelectedAssetId, setPag
         />
       </Panel>
       <Panel title="Asset Actions" icon={<ShieldCheck size={18} />} className="tool-panel">
+        <div className="selected-summary">
+          <strong>{selectedAsset.name}</strong>
+          <span>{selectedAsset.owner} / epoch {selectedAsset.epoch}</span>
+          <em>{selectedAsset.status}</em>
+        </div>
         <div className="action-stack">
           <button onClick={() => setPage("Access")}><Eye size={16} /> Request Access</button>
           <button onClick={() => setPage("Transfers")}><Send size={16} /> Transfer Capability</button>
           <button onClick={() => setPage("Receipts")}><FileCheck2 size={16} /> View Receipts</button>
+          <button onClick={() => updateAssetStatus(selectedAsset.id, selectedAsset.status === "Frozen" ? "Active" : "Frozen")}>
+            <LockKeyhole size={16} /> {selectedAsset.status === "Frozen" ? "Unfreeze Asset" : "Freeze Asset"}
+          </button>
         </div>
       </Panel>
     </section>
@@ -903,7 +1002,7 @@ function TransfersPage({ selectedAsset, transferTo, setTransferTo, transfers, cr
   );
 }
 
-function ReceiptsPage({ receipts }: PageProps) {
+function ReceiptsPage({ receipts, generateProof, proofBundle }: PageProps) {
   return (
     <section className="page-grid">
       <Panel title="Receipts & Proofs" icon={<FileCheck2 size={18} />} className="wide-panel">
@@ -918,6 +1017,11 @@ function ReceiptsPage({ receipts }: PageProps) {
       </Panel>
       <Panel title="Proof Inspector" icon={<BadgeCheck size={18} />} className="tool-panel">
         <ReceiptList receipts={receipts.slice(0, 5)} />
+        <button className="secondary-action" onClick={generateProof}>
+          Generate Proof Bundle
+          <ExternalLink size={16} />
+        </button>
+        {proofBundle && <pre className="proof-box">{proofBundle}</pre>}
       </Panel>
     </section>
   );
@@ -957,6 +1061,94 @@ function AuditPage({ audit }: PageProps) {
             cells: [item.event, item.actor, item.target, item.result, item.time],
           }))}
         />
+      </Panel>
+    </section>
+  );
+}
+
+function IdentitiesPage({ assets, accessRequests }: PageProps) {
+  const identities = [
+    { name: "Alice", role: "Controller / owner", pkh: "03aa...1111", assets: assets.filter((asset) => asset.owner === "Alice").length },
+    { name: "Bob", role: "Owner", pkh: "02bb...2222", assets: assets.filter((asset) => asset.owner === "Bob").length },
+    { name: "Controller", role: "Policy authority", pkh: "04cc...3333", assets: assets.filter((asset) => asset.owner === "Controller").length },
+    { name: "Mallory", role: "External requester", pkh: "ff00...bad0", assets: 0 },
+  ];
+  return (
+    <section className="page-grid">
+      <Panel title="Identities" icon={<Fingerprint size={18} />} className="wide-panel">
+        <DataTable
+          headers={["Identity", "Role", "PubKey Hash", "Current Assets", "Requests"]}
+          rows={identities.map((identity) => ({
+            id: identity.name,
+            cells: [
+              identity.name,
+              identity.role,
+              identity.pkh,
+              String(identity.assets),
+              String(accessRequests.filter((request) => request.requester === identity.name).length),
+            ],
+          }))}
+        />
+      </Panel>
+      <Panel title="Identity Notes" icon={<UserRoundCheck size={18} />} className="tool-panel">
+        <div className="note-stack">
+          <span><Check size={15} /> Access is granted only when requester PKH matches current capability owner.</span>
+          <span><Check size={15} /> Stale owners may keep past knowledge, but future managed grants stop.</span>
+          <span><Check size={15} /> Controller activity is receipt-backed and audit-visible.</span>
+        </div>
+      </Panel>
+    </section>
+  );
+}
+
+function KeysPage({ selectedAsset, policies }: PageProps) {
+  const policy = policies.find((item) => item.id === selectedAsset.mode);
+  return (
+    <section className="page-grid two">
+      <Panel title="KMS Record" icon={<KeyRound size={18} />} className="tool-panel">
+        <div className="form-grid">
+          <KeyValue label="Asset" value={selectedAsset.name} />
+          <KeyValue label="Key State" value={selectedAsset.status === "Active" ? "Active" : "Blocked"} pill={selectedAsset.status === "Active"} />
+          <KeyValue label="Wrapping Key" value="local-dev-kek-v1" />
+          <KeyValue label="Grant TTL" value={`${policy?.ttl ?? 0}s`} />
+          <KeyValue label="Owner PKH" value={selectedAsset.ownerKey} />
+        </div>
+      </Panel>
+      <Panel title="Release Conditions" icon={<ShieldCheck size={18} />} className="wide-panel">
+        <div className="note-stack">
+          <span><Check size={15} /> Capability outpoint must be current.</span>
+          <span><Check size={15} /> Epoch must match active KMS record.</span>
+          <span><Check size={15} /> Policy state must be active.</span>
+          <span><Check size={15} /> Frozen assets deny new managed access requests.</span>
+        </div>
+      </Panel>
+    </section>
+  );
+}
+
+function SettingsPage({ resetSimulation, assets, receipts, transfers, audit }: PageProps) {
+  return (
+    <section className="page-grid two">
+      <Panel title="Workspace Settings" icon={<Settings size={18} />} className="tool-panel">
+        <div className="form-grid">
+          <KeyValue label="Persistence" value="Local Browser" pill />
+          <KeyValue label="Assets" value={String(assets.length)} />
+          <KeyValue label="Receipts" value={String(receipts.length)} />
+          <KeyValue label="Transfers" value={String(transfers.length)} />
+          <KeyValue label="Audit Events" value={String(audit.length)} />
+          <button className="primary-action inline-action" onClick={resetSimulation}>
+            Reset Simulation
+            <Settings size={16} />
+          </button>
+        </div>
+      </Panel>
+      <Panel title="Runtime Health" icon={<Activity size={18} />} className="wide-panel">
+        <div className="health-grid">
+          <StatusTile label="Indexer" value="Synced" />
+          <StatusTile label="Controller" value="Online" />
+          <StatusTile label="KMS" value="Ready" />
+          <StatusTile label="Receipt Store" value="Writable" />
+        </div>
       </Panel>
     </section>
   );
@@ -1094,6 +1286,16 @@ function Party({ name, keyText }: { name: string; keyText: string }) {
         <strong>{name}</strong>
         <small>{keyText}</small>
       </span>
+    </div>
+  );
+}
+
+function StatusTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="status-tile">
+      <span className="status-dot" />
+      <small>{label}</small>
+      <strong>{value}</strong>
     </div>
   );
 }

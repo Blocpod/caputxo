@@ -1211,6 +1211,96 @@ hr {
   text-transform: uppercase;
 }
 
+.selected-summary {
+  display: grid;
+  gap: 5px;
+  margin: 18px 18px 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(5, 13, 26, 0.62);
+}
+
+.selected-summary span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.selected-summary em {
+  width: max-content;
+  color: #8dedac;
+  background: rgba(81, 219, 131, 0.12);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.note-stack {
+  display: grid;
+  gap: 13px;
+  padding: 18px;
+  color: #c4d0e4;
+}
+
+.note-stack span {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  line-height: 1.45;
+}
+
+.note-stack svg {
+  color: var(--green);
+  margin-top: 2px;
+  min-width: 15px;
+}
+
+.proof-box {
+  max-height: 260px;
+  overflow: auto;
+  margin: 14px 18px 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: #bad0ff;
+  background: rgba(3, 9, 18, 0.86);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 14px;
+  padding: 18px;
+}
+
+.status-tile {
+  min-height: 120px;
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(5, 13, 26, 0.62);
+  padding: 16px;
+}
+
+.status-tile small {
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.status-tile strong {
+  font-size: 20px;
+}
+
 .footer {
   position: fixed;
   left: 278px;
