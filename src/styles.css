@@ -1278,6 +1278,58 @@ hr {
   padding: 18px;
 }
 
+.empty-state {
+  display: grid;
+  gap: 6px;
+  margin: 16px;
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: #c7d5ec;
+  background: rgba(5, 13, 26, 0.42);
+}
+
+.empty-state span {
+  color: var(--muted);
+}
+
+.wallet-actions {
+  display: grid;
+  gap: 10px;
+  padding: 0 18px 18px;
+}
+
+.wallet-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(5, 13, 26, 0.62);
+  padding: 13px;
+}
+
+.wallet-card span {
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.wallet-card div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.wallet-card button {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(9, 21, 39, 0.82);
+  color: #dce8ff;
+  cursor: pointer;
+}
+
 .status-tile {
   min-height: 120px;
   display: grid;

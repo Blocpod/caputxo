@@ -132,6 +132,7 @@ export const seedState = {
       copy: "Future hardened execution path for threshold or enclave release."
     }
   ],
+  wallets: [],
   selectedAssetId: "asset-design-spec",
   proofBundle: ""
 };

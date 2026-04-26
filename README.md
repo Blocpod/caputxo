@@ -123,6 +123,7 @@ Not yet production:
 
 - Identities page for Alice, Bob, Controller, and Mallory.
 - Keys page for simulated KMS release conditions.
+- Wallets page for non-custodial BSV wallet connection planning, watch-only addresses, UTXO discovery, and transfer signing intents.
 - Settings page for persistence mode, runtime counts, health, and reset simulation.
 
 ## Architecture
@@ -252,6 +253,8 @@ The gateway also exposes command endpoints that move the project away from clien
 - `POST /api/transfers`
 - `POST /api/transfers/:id/advance`
 - `POST /api/utxo/currentness`
+- `POST /api/wallets/utxos`
+- `POST /api/tx/intent`
 - `POST /api/bsv/broadcast`
 - `POST /api/receipts/sign`
 - `POST /api/receipts/verify`
@@ -265,6 +268,14 @@ The cryptographic pieces use Node's built-in crypto primitives:
 
 The BSV adapter is intentionally a boundary, not a hidden wallet. It can verify UTXO currentness and broadcast a raw transaction through WhatsOnChain-compatible endpoints, but it does not fabricate private keys, spend user funds, or pretend to sign BSV transactions without a real wallet.
 
+Wallet support is non-custodial:
+
+- Users can add watch-only BSV testnet addresses.
+- The gateway can discover UTXOs for an address.
+- The app can prepare a transaction intent for an external wallet to sign.
+- The app does not store private keys or seed phrases.
+- Browser-provider detection is scaffolded so a future Yours/HandCash/RelayX-style integration can sign challenges and transaction intents in the user's wallet.
+
 ## State Model
 
 The prototype state is centered around these records:
@@ -275,6 +286,7 @@ The prototype state is centered around these records:
 - `receipts`: controller-issued receipts for important actions.
 - `audit`: human-readable operational ledger.
 - `policies`: managed access policy modes.
+- `wallets`: watch-only BSV wallet records and discovered UTXOs.
 - `selectedAssetId`: active UI asset.
 - `proofBundle`: most recently generated proof bundle.
 

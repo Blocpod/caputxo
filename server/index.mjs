@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { broadcastRawTransaction, fetchUtxoCurrentness } from "./bsv.mjs";
+import { broadcastRawTransaction, fetchAddressUtxos, fetchUtxoCurrentness } from "./bsv.mjs";
 import {
   controllerPublicKey,
   createWrappedDek,
@@ -222,6 +222,39 @@ createServer(async (req, res) => {
     }
     if (req.url === "/api/utxo/currentness" && req.method === "POST") {
       return send(res, 200, await fetchUtxoCurrentness(await readBody(req)));
+    }
+    if (req.url === "/api/wallets/utxos" && req.method === "POST") {
+      const body = await readBody(req);
+      return send(res, 200, await fetchAddressUtxos(body.address));
+    }
+    if (req.url === "/api/tx/intent" && req.method === "POST") {
+      const body = await readBody(req);
+      const state = await readState();
+      const asset = state.assets.find((item) => item.id === body.assetId);
+      const wallet = state.wallets?.find((item) => item.id === body.walletId);
+      if (!asset) return send(res, 404, { ok: false, reason: "asset_not_found" });
+      if (!wallet) return send(res, 404, { ok: false, reason: "wallet_not_found" });
+      const intent = {
+        id: randomId("intent"),
+        network: wallet.network ?? "BSV Testnet",
+        walletId: wallet.id,
+        address: wallet.address,
+        assetId: asset.id,
+        currentOutpoint: asset.outpoint,
+        currentOwner: asset.owner,
+        targetOwner: body.to,
+        capabilityHash: domainHash("CapUTXO.transferIntent.v1", {
+          assetId: asset.id,
+          outpoint: asset.outpoint,
+          epoch: asset.epoch,
+          to: body.to,
+          wallet: wallet.address,
+        }),
+        requiredSigner: wallet.address,
+        signingMode: "external-wallet",
+        createdAt: nowLabel(),
+      };
+      return send(res, 200, { ok: true, intent });
     }
     if (req.url === "/api/bsv/broadcast" && req.method === "POST") {
       const body = await readBody(req);

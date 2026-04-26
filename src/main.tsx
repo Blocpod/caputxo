@@ -29,11 +29,12 @@ import {
   Sparkles,
   User,
   UserRoundCheck,
+  Wallet,
   XCircle,
 } from "lucide-react";
 import "./styles.css";
 
-type Page = "Overview" | "Mint" | "Assets" | "Access" | "Transfers" | "Receipts" | "Policies" | "Audit" | "Identities" | "Keys" | "Settings";
+type Page = "Overview" | "Mint" | "Assets" | "Access" | "Transfers" | "Receipts" | "Policies" | "Audit" | "Identities" | "Keys" | "Wallets" | "Settings";
 type TransferStep = "prepare" | "precommit" | "transfer" | "finalize";
 type AccessMode = "LOCAL_DECRYPT_DEMO" | "CONTROLLED_VIEWER_MVP" | "TEE_THRESHOLD_FUTURE";
 type AssetStatus = "Active" | "Pending" | "Frozen";
@@ -107,6 +108,18 @@ type PolicyRecord = {
   copy: string;
 };
 
+type WalletRecord = {
+  id: string;
+  label: string;
+  address: string;
+  network: "BSV Testnet" | "BSV Mainnet";
+  identity: "Alice" | "Bob" | "Controller";
+  mode: "Watch Only" | "Browser Provider";
+  status: "Ready" | "Needs Provider" | "Indexer Error";
+  lastChecked: string;
+  utxos: Array<{ txid: string; vout: number; satoshis: number; height?: number }>;
+};
+
 type AppState = {
   assets: AssetRecord[];
   accessRequests: AccessRequest[];
@@ -114,6 +127,7 @@ type AppState = {
   receipts: ReceiptRecord[];
   audit: AuditRecord[];
   policies: PolicyRecord[];
+  wallets: WalletRecord[];
   selectedAssetId: string;
   proofBundle: string;
 };
@@ -132,6 +146,7 @@ const nav: Array<[Page, typeof Hexagon]> = [
 const systemNav: Array<[Page, typeof Fingerprint]> = [
   ["Identities", Fingerprint],
   ["Keys", KeyRound],
+  ["Wallets", Wallet],
   ["Settings", Settings],
 ];
 
@@ -329,6 +344,7 @@ function App() {
   const [receipts, setReceipts] = useStoredState("caputxo.receipts", initialReceipts);
   const [audit, setAudit] = useStoredState("caputxo.audit", initialAudit);
   const [policies, setPolicies] = useStoredState("caputxo.policies", initialPolicies);
+  const [wallets, setWallets] = useStoredState<WalletRecord[]>("caputxo.wallets", []);
   const [selectedAssetId, setSelectedAssetId] = useStoredState("caputxo.selectedAssetId", initialAssets[0].id);
   const [mintName, setMintName] = useState("new_capability_asset.enc");
   const [mintOwner, setMintOwner] = useState<"Alice" | "Bob" | "Controller">("Alice");
@@ -336,6 +352,10 @@ function App() {
   const [accessRequester, setAccessRequester] = useState<"Alice" | "Bob" | "Mallory">("Bob");
   const [transferTo, setTransferTo] = useState<"Alice" | "Bob" | "Controller">("Alice");
   const [proofBundle, setProofBundle] = useStoredState("caputxo.proofBundle", "");
+  const [walletLabel, setWalletLabel] = useState("Alice testnet wallet");
+  const [walletAddress, setWalletAddress] = useState("");
+  const [walletIdentity, setWalletIdentity] = useState<"Alice" | "Bob" | "Controller">("Alice");
+  const [walletIntent, setWalletIntent] = useState("");
   const [apiStatus, setApiStatus] = useState<"Connecting" | "API synced" | "Browser local">("Connecting");
   const [apiHydrated, setApiHydrated] = useState(false);
 
@@ -347,8 +367,8 @@ function App() {
   );
 
   const stateSnapshot: AppState = useMemo(
-    () => ({ assets, accessRequests, transfers, receipts, audit, policies, selectedAssetId, proofBundle }),
-    [assets, accessRequests, transfers, receipts, audit, policies, selectedAssetId, proofBundle],
+    () => ({ assets, accessRequests, transfers, receipts, audit, policies, wallets, selectedAssetId, proofBundle }),
+    [assets, accessRequests, transfers, receipts, audit, policies, wallets, selectedAssetId, proofBundle],
   );
 
   useEffect(() => {
@@ -366,6 +386,7 @@ function App() {
         setReceipts(state.receipts ?? initialReceipts);
         setAudit(state.audit ?? initialAudit);
         setPolicies(state.policies ?? initialPolicies);
+        setWallets(state.wallets ?? []);
         setSelectedAssetId(state.selectedAssetId ?? initialAssets[0].id);
         setProofBundle(state.proofBundle ?? "");
         setApiStatus("API synced");
@@ -379,7 +400,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [setAccessRequests, setAssets, setAudit, setPolicies, setProofBundle, setReceipts, setSelectedAssetId, setTransfers]);
+  }, [setAccessRequests, setAssets, setAudit, setPolicies, setProofBundle, setReceipts, setSelectedAssetId, setTransfers, setWallets]);
 
   useEffect(() => {
     if (!apiHydrated || apiStatus !== "API synced") return;
@@ -564,9 +585,83 @@ function App() {
     setReceipts(initialReceipts);
     setAudit(initialAudit);
     setPolicies(initialPolicies);
+    setWallets([]);
     setSelectedAssetId(initialAssets[0].id);
     setProofBundle("");
     setPage("Overview");
+  };
+
+  const addWallet = () => {
+    if (!walletAddress.trim()) return;
+    const wallet: WalletRecord = {
+      id: makeId("wallet"),
+      label: walletLabel || `${walletIdentity} wallet`,
+      address: walletAddress.trim(),
+      network: "BSV Testnet",
+      identity: walletIdentity,
+      mode: "Watch Only",
+      status: "Ready",
+      lastChecked: "Never",
+      utxos: [],
+    };
+    setWallets((items) => [wallet, ...items]);
+    addAudit("Wallet Added", walletIdentity, wallet.address, "Recorded");
+    setWalletAddress("");
+  };
+
+  const detectProvider = () => {
+    const maybeWindow = window as Window & { bsv?: unknown; yours?: unknown; handcash?: unknown; relayx?: unknown };
+    const found = [
+      maybeWindow.bsv && "window.bsv",
+      maybeWindow.yours && "window.yours",
+      maybeWindow.handcash && "window.handcash",
+      maybeWindow.relayx && "window.relayx",
+    ].filter(Boolean);
+    addAudit("Wallet Provider Scan", "Browser", found.length ? String(found.join(", ")) : "No provider detected", found.length ? "Accepted" : "Denied");
+  };
+
+  const refreshWalletUtxos = async (walletId: string) => {
+    const wallet = wallets.find((item) => item.id === walletId);
+    if (!wallet) return;
+    try {
+      const response = await fetch("/api/wallets/utxos", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ address: wallet.address }),
+      });
+      const result = await response.json();
+      setWallets((items) =>
+        items.map((item) =>
+          item.id === walletId
+            ? {
+                ...item,
+                status: result.ok ? "Ready" : "Indexer Error",
+                lastChecked: nowLabel(),
+                utxos: result.ok ? result.utxos : [],
+              }
+            : item,
+        ),
+      );
+      addAudit("Wallet UTXO Refresh", "Indexer", wallet.address, result.ok ? "Accepted" : "Denied");
+    } catch {
+      setWallets((items) => items.map((item) => (item.id === walletId ? { ...item, status: "Indexer Error", lastChecked: nowLabel() } : item)));
+      addAudit("Wallet UTXO Refresh", "Indexer", wallet.address, "Denied");
+    }
+  };
+
+  const prepareWalletIntent = async (walletId: string) => {
+    try {
+      const response = await fetch("/api/tx/intent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ walletId, assetId: selectedAsset.id, to: transferTo }),
+      });
+      const result = await response.json();
+      setWalletIntent(JSON.stringify(result.intent ?? result, null, 2));
+      addAudit("Transaction Intent Prepared", "Controller", selectedAsset.id, result.ok ? "Recorded" : "Denied");
+    } catch {
+      setWalletIntent(JSON.stringify({ ok: false, reason: "gateway_unavailable" }, null, 2));
+    }
   };
 
   const renderPage = () => {
@@ -600,6 +695,18 @@ function App() {
       receipts,
       policies,
       togglePolicy,
+      wallets,
+      walletLabel,
+      setWalletLabel,
+      walletAddress,
+      setWalletAddress,
+      walletIdentity,
+      setWalletIdentity,
+      walletIntent,
+      addWallet,
+      detectProvider,
+      refreshWalletUtxos,
+      prepareWalletIntent,
       updateAssetStatus,
       generateProof,
       proofBundle,
@@ -627,6 +734,8 @@ function App() {
         return <IdentitiesPage {...props} />;
       case "Keys":
         return <KeysPage {...props} />;
+      case "Wallets":
+        return <WalletsPage {...props} />;
       case "Settings":
         return <SettingsPage {...props} />;
       default:
@@ -764,6 +873,18 @@ type PageProps = {
   receipts: ReceiptRecord[];
   policies: PolicyRecord[];
   togglePolicy: (id: AccessMode) => void;
+  wallets: WalletRecord[];
+  walletLabel: string;
+  setWalletLabel: (value: string) => void;
+  walletAddress: string;
+  setWalletAddress: (value: string) => void;
+  walletIdentity: WalletRecord["identity"];
+  setWalletIdentity: (value: WalletRecord["identity"]) => void;
+  walletIntent: string;
+  addWallet: () => void;
+  detectProvider: () => void;
+  refreshWalletUtxos: (walletId: string) => void;
+  prepareWalletIntent: (walletId: string) => void;
   updateAssetStatus: (id: string, status: AssetStatus) => void;
   generateProof: () => void;
   proofBundle: string;
@@ -1189,6 +1310,83 @@ function KeysPage({ selectedAsset, policies }: PageProps) {
           <span><Check size={15} /> Policy state must be active.</span>
           <span><Check size={15} /> Frozen assets deny new managed access requests.</span>
         </div>
+      </Panel>
+    </section>
+  );
+}
+
+function WalletsPage({
+  wallets,
+  walletLabel,
+  setWalletLabel,
+  walletAddress,
+  setWalletAddress,
+  walletIdentity,
+  setWalletIdentity,
+  addWallet,
+  detectProvider,
+  refreshWalletUtxos,
+  prepareWalletIntent,
+  walletIntent,
+}: PageProps) {
+  return (
+    <section className="page-grid">
+      <Panel title="BSV Wallets" icon={<Wallet size={18} />} className="wide-panel">
+        <DataTable
+          headers={["Label", "Identity", "Network", "Mode", "Status", "UTXOs"]}
+          rows={wallets.map((wallet) => ({
+            id: wallet.id,
+            cells: [wallet.label, wallet.identity, wallet.network, wallet.mode, wallet.status, String(wallet.utxos.length)],
+          }))}
+        />
+        {wallets.length === 0 && (
+          <div className="empty-state">
+            <strong>No wallets added yet</strong>
+            <span>Add a watch-only BSV testnet address to discover UTXOs and prepare signing intents.</span>
+          </div>
+        )}
+      </Panel>
+
+      <Panel title="Connect Wallet" icon={<KeyRound size={18} />} className="tool-panel">
+        <div className="form-grid">
+          <label>
+            Label
+            <input value={walletLabel} onChange={(event) => setWalletLabel(event.target.value)} />
+          </label>
+          <label>
+            Watch-only Address
+            <input value={walletAddress} onChange={(event) => setWalletAddress(event.target.value)} placeholder="BSV testnet address" />
+          </label>
+          <label>
+            Identity
+            <select value={walletIdentity} onChange={(event) => setWalletIdentity(event.target.value as WalletRecord["identity"])}>
+              <option>Alice</option>
+              <option>Bob</option>
+              <option>Controller</option>
+            </select>
+          </label>
+          <button className="primary-action inline-action" onClick={addWallet}>
+            Add Watch-only Wallet
+            <Wallet size={16} />
+          </button>
+          <button className="secondary-action inline-action" onClick={detectProvider}>
+            Detect Browser Provider
+            <ExternalLink size={16} />
+          </button>
+        </div>
+        <div className="wallet-actions">
+          {wallets.map((wallet) => (
+            <div className="wallet-card" key={wallet.id}>
+              <strong>{wallet.label}</strong>
+              <span>{wallet.address}</span>
+              <div>
+                <button onClick={() => refreshWalletUtxos(wallet.id)}>Refresh UTXOs</button>
+                <button onClick={() => prepareWalletIntent(wallet.id)}>Prepare Intent</button>
+              </div>
+            </div>
+          ))}
+        </div>
+        {walletIntent && <pre className="proof-box">{walletIntent}</pre>}
       </Panel>
     </section>
   );
