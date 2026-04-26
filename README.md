@@ -54,12 +54,11 @@ Implemented:
 
 Not yet production:
 
-- Real BSV transaction construction/broadcast.
-- Real UTXO indexer/currentness verification.
-- Real wallet authentication and signed challenge verification.
-- Real encryption, KMS, HSM, TEE, MPC, or threshold key release.
-- Real canonical receipt signing and independent verification.
-- Multi-user authorization and server-side access control.
+- Wallet-backed BSV transaction signing and funding.
+- Hosted production UTXO indexer with service-level guarantees.
+- Production KMS/HSM/TEE/MPC integration.
+- Multi-user database-backed authorization and tenant isolation.
+- Immutable audit storage.
 
 ## Features
 
@@ -240,6 +239,31 @@ Replaces the full application state. The frontend uses this endpoint to sync sta
 ### `POST /api/reset`
 
 Restores seed state.
+
+### Production-shaped command endpoints
+
+The gateway also exposes command endpoints that move the project away from client-owned full-state writes:
+
+- `GET /api/controller/public-key`
+- `POST /api/auth/challenge`
+- `POST /api/auth/verify`
+- `POST /api/assets/mint`
+- `POST /api/access/requests`
+- `POST /api/transfers`
+- `POST /api/transfers/:id/advance`
+- `POST /api/utxo/currentness`
+- `POST /api/bsv/broadcast`
+- `POST /api/receipts/sign`
+- `POST /api/receipts/verify`
+
+The cryptographic pieces use Node's built-in crypto primitives:
+
+- Ed25519 controller identity for signed protocol objects and receipts.
+- Deterministic canonical object hashing.
+- AES-256-GCM key wrapping for simulated DEK custody.
+- Signed challenge verification endpoint for wallet/auth integration.
+
+The BSV adapter is intentionally a boundary, not a hidden wallet. It can verify UTXO currentness and broadcast a raw transaction through WhatsOnChain-compatible endpoints, but it does not fabricate private keys, spend user funds, or pretend to sign BSV transactions without a real wallet.
 
 ## State Model
 
