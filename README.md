@@ -19,6 +19,7 @@ The app is built as a production-style control center with a React dashboard, an
 - [State Model](#state-model)
 - [Core Workflows](#core-workflows)
 - [Security Model](#security-model)
+- [Protocol Specification](#protocol-specification)
 - [Production Readiness Roadmap](#production-readiness-roadmap)
 - [Deployment](#deployment)
 - [Development Notes](#development-notes)
@@ -252,6 +253,9 @@ The gateway also exposes command endpoints that move the project away from clien
 - `POST /api/access/requests`
 - `POST /api/transfers`
 - `POST /api/transfers/:id/advance`
+- `POST /api/assets/:id/status`
+- `POST /api/policies/:id/toggle`
+- `POST /api/receipts/proof`
 - `POST /api/utxo/currentness`
 - `POST /api/wallets/utxos`
 - `POST /api/tx/intent`
@@ -372,6 +376,12 @@ Before real-world use, this needs:
 - rate limiting and abuse controls;
 - adversarial protocol tests.
 
+## Protocol Specification
+
+The draft protocol spec lives in [`docs/caputxo-protocol.md`](docs/caputxo-protocol.md). It covers canonical encoding, state fields, transition rules, manifest and policy hashes, receipt format and verification, threat model, non-claims, and the BSV testnet transaction path.
+
+SQLite migration DDL lives in [`infra/sqlite/001_caputxo_schema.sql`](infra/sqlite/001_caputxo_schema.sql). The current runtime still uses JSON storage unless a real database driver is added, but the schema is explicit and ready for a SQLite/Postgres storage adapter.
+
 ## Production Readiness Roadmap
 
 ### Milestone 1: Protocol Package
@@ -451,20 +461,26 @@ Current checks:
 
 ```bash
 npm run lint
+npm test
 npm run build
 ```
 
-Recommended next tests:
+Current protocol tests cover:
 
-- protocol unit tests;
-- API route tests;
-- Playwright end-to-end tests;
 - stale owner denial;
+- transfer finalization owner/epoch changes;
 - paused policy denial;
 - frozen asset denial;
-- transfer finalization updates owner and epoch;
-- receipt/proof generation;
-- persistence across reloads.
+- receipt tampering;
+- invalid signatures;
+- currentness validation failure.
+
+Recommended next tests:
+
+- API route tests with a temporary storage directory;
+- Playwright end-to-end tests;
+- wallet provider signing tests with a test wallet;
+- live BSV testnet transaction integration tests gated by environment variables.
 
 ## License
 

@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useMemo, useState } from "react";
+import { StrictMode, useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
@@ -87,6 +87,7 @@ type ReceiptRecord = {
   policy: AccessMode;
   time: string;
   trace: string;
+  signed?: unknown;
 };
 
 type AuditRecord = {
@@ -356,6 +357,7 @@ function App() {
   const [walletAddress, setWalletAddress] = useState("");
   const [walletIdentity, setWalletIdentity] = useState<"Alice" | "Bob" | "Controller">("Alice");
   const [walletIntent, setWalletIntent] = useState("");
+  const [receiptVerification, setReceiptVerification] = useState("");
   const [apiStatus, setApiStatus] = useState<"Connecting" | "API synced" | "Browser local">("Connecting");
   const [apiHydrated, setApiHydrated] = useState(false);
 
@@ -371,6 +373,37 @@ function App() {
     [assets, accessRequests, transfers, receipts, audit, policies, wallets, selectedAssetId, proofBundle],
   );
 
+  const applyServerState = useCallback((state?: Partial<AppState>) => {
+    if (!state) return;
+    setAssets(state.assets ?? initialAssets);
+    setAccessRequests(state.accessRequests ?? initialAccess);
+    setTransfers(state.transfers ?? initialTransfers);
+    setReceipts(state.receipts ?? initialReceipts);
+    setAudit(state.audit ?? initialAudit);
+    setPolicies(state.policies ?? initialPolicies);
+    setWallets(state.wallets ?? []);
+    setSelectedAssetId(state.selectedAssetId ?? initialAssets[0].id);
+    setProofBundle(state.proofBundle ?? "");
+  }, [setAccessRequests, setAssets, setAudit, setPolicies, setProofBundle, setReceipts, setSelectedAssetId, setTransfers, setWallets]);
+
+  const postCommand = async <T,>(url: string, body: unknown): Promise<T | null> => {
+    if (apiStatus !== "API synced") return null;
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const result = (await response.json()) as T & { state?: AppState };
+      if (!response.ok) return null;
+      applyServerState(result.state);
+      return result;
+    } catch {
+      setApiStatus("Browser local");
+      return null;
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     fetch("/api/state")
@@ -380,15 +413,7 @@ function App() {
       })
       .then((state) => {
         if (cancelled) return;
-        setAssets(state.assets ?? initialAssets);
-        setAccessRequests(state.accessRequests ?? initialAccess);
-        setTransfers(state.transfers ?? initialTransfers);
-        setReceipts(state.receipts ?? initialReceipts);
-        setAudit(state.audit ?? initialAudit);
-        setPolicies(state.policies ?? initialPolicies);
-        setWallets(state.wallets ?? []);
-        setSelectedAssetId(state.selectedAssetId ?? initialAssets[0].id);
-        setProofBundle(state.proofBundle ?? "");
+        applyServerState(state);
         setApiStatus("API synced");
       })
       .catch(() => {
@@ -400,24 +425,10 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [setAccessRequests, setAssets, setAudit, setPolicies, setProofBundle, setReceipts, setSelectedAssetId, setTransfers, setWallets]);
+  }, [applyServerState]);
 
-  useEffect(() => {
-    if (!apiHydrated || apiStatus !== "API synced") return;
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      fetch("/api/state", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(stateSnapshot),
-        signal: controller.signal,
-      }).catch(() => setApiStatus("Browser local"));
-    }, 250);
-    return () => {
-      controller.abort();
-      window.clearTimeout(timer);
-    };
-  }, [apiHydrated, apiStatus, stateSnapshot]);
+  void stateSnapshot;
+  void apiHydrated;
 
   const runCommandSearch = () => {
     const normalized = query.trim().toLowerCase();
@@ -444,7 +455,12 @@ function App() {
     return next;
   };
 
-  const mintAsset = () => {
+  const mintAsset = async () => {
+    const serverResult = await postCommand<{ ok: boolean; state?: AppState }>("/api/assets/mint", { name: mintName, owner: mintOwner, mode: mintMode });
+    if (serverResult?.ok) {
+      setPage("Assets");
+      return;
+    }
     const next: AssetRecord = {
       id: `asset-${mintName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${assets.length + 1}`,
       name: mintName || "untitled.enc",
@@ -466,7 +482,9 @@ function App() {
     setPage("Assets");
   };
 
-  const evaluateAccess = () => {
+  const evaluateAccess = async () => {
+    const serverResult = await postCommand<{ ok: boolean; state?: AppState }>("/api/access/requests", { assetId: selectedAsset.id, requester: accessRequester });
+    if (serverResult) return;
     const policy = policies.find((item) => item.id === selectedAsset.mode)!;
     const requesterKey = accessRequester === "Bob" ? "02bb...2222" : accessRequester === "Alice" ? "03aa...1111" : "ff00...bad0";
     const ownerMatch = selectedAsset.owner === accessRequester;
@@ -495,7 +513,12 @@ function App() {
     addAudit(ok ? "Grant Issued" : "Access Denied", "Controller", accessRequester, ok ? "Accepted" : "Denied");
   };
 
-  const createTransfer = () => {
+  const createTransfer = async () => {
+    const serverResult = await postCommand<{ ok: boolean; state?: AppState }>("/api/transfers", { assetId: selectedAsset.id, to: transferTo });
+    if (serverResult?.ok) {
+      setStep("prepare");
+      return;
+    }
     if (transferTo === selectedAsset.owner) return;
     const next: TransferRecord = {
       id: makeId("xfer"),
@@ -512,7 +535,12 @@ function App() {
     addAudit("Transfer Prepared", "Controller", `${selectedAsset.owner} -> ${transferTo}`, "Recorded");
   };
 
-  const advanceTransfer = (id: string) => {
+  const advanceTransfer = async (id: string) => {
+    const serverResult = await postCommand<{ ok: boolean; transfer?: TransferRecord; state?: AppState }>(`/api/transfers/${id}/advance`, {});
+    if (serverResult?.ok) {
+      if (serverResult.transfer) setStep(serverResult.transfer.step);
+      return;
+    }
     const order: TransferStep[] = ["prepare", "precommit", "transfer", "finalize"];
     const transfer = transfers.find((item) => item.id === id);
     if (!transfer) return;
@@ -544,7 +572,9 @@ function App() {
     }
   };
 
-  const togglePolicy = (id: AccessMode) => {
+  const togglePolicy = async (id: AccessMode) => {
+    const serverResult = await postCommand<{ ok: boolean; state?: AppState }>(`/api/policies/${encodeURIComponent(id)}/toggle`, {});
+    if (serverResult?.ok) return;
     setPolicies((items) =>
       items.map((item) =>
         item.id === id ? { ...item, state: item.state === "Active" ? "Paused" : "Active" } : item,
@@ -554,13 +584,20 @@ function App() {
     addAudit("Policy Updated", "Controller", id, "Updated");
   };
 
-  const updateAssetStatus = (id: string, status: AssetStatus) => {
+  const updateAssetStatus = async (id: string, status: AssetStatus) => {
+    const serverResult = await postCommand<{ ok: boolean; state?: AppState }>(`/api/assets/${id}/status`, { status });
+    if (serverResult?.ok) return;
     setAssets((items) => items.map((asset) => (asset.id === id ? { ...asset, status } : asset)));
     addReceipt({ kind: "Asset Status Updated", assetId: id, subject: status, ok: status !== "Frozen", policy: selectedAsset.mode, trace: `asset status set to ${status}` });
     addAudit("Asset Status Updated", "Controller", id, "Updated");
   };
 
-  const generateProof = () => {
+  const generateProof = async () => {
+    const serverResult = await postCommand<{ ok: boolean; proofBundle?: string; state?: AppState }>("/api/receipts/proof", { assetId: selectedAsset.id });
+    if (serverResult?.ok && serverResult.proofBundle) {
+      copyText(serverResult.proofBundle);
+      return;
+    }
     const bundle = {
       generatedAt: nowLabel(),
       network: "BSV Testnet",
@@ -578,7 +615,30 @@ function App() {
     addAudit("Proof Generated", "Controller", selectedAsset.id, "Recorded");
   };
 
-  const resetSimulation = () => {
+  const verifyLatestReceipt = async () => {
+    const signed = receipts.find((receipt) => receipt.signed)?.signed;
+    if (!signed) {
+      setReceiptVerification(JSON.stringify({ ok: false, reason: "no_signed_receipt_available" }, null, 2));
+      return;
+    }
+    try {
+      const response = await fetch("/api/receipts/verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ signed }),
+      });
+      setReceiptVerification(JSON.stringify(await response.json(), null, 2));
+    } catch {
+      setReceiptVerification(JSON.stringify({ ok: false, reason: "gateway_unavailable" }, null, 2));
+    }
+  };
+
+  const resetSimulation = async () => {
+    const serverResult = await postCommand<AppState>("/api/reset", {});
+    if (serverResult) {
+      setPage("Overview");
+      return;
+    }
     setAssets(initialAssets);
     setAccessRequests(initialAccess);
     setTransfers(initialTransfers);
@@ -591,8 +651,18 @@ function App() {
     setPage("Overview");
   };
 
-  const addWallet = () => {
+  const addWallet = async () => {
     if (!walletAddress.trim()) return;
+    const serverResult = await postCommand<{ ok: boolean; state?: AppState }>("/api/wallets", {
+      label: walletLabel,
+      address: walletAddress.trim(),
+      identity: walletIdentity,
+      network: "BSV Testnet",
+    });
+    if (serverResult?.ok) {
+      setWalletAddress("");
+      return;
+    }
     const wallet: WalletRecord = {
       id: makeId("wallet"),
       label: walletLabel || `${walletIdentity} wallet`,
@@ -710,6 +780,8 @@ function App() {
       updateAssetStatus,
       generateProof,
       proofBundle,
+      verifyLatestReceipt,
+      receiptVerification,
       resetSimulation,
       apiStatus,
       audit,
@@ -860,19 +932,19 @@ type PageProps = {
   setMintOwner: (owner: AssetRecord["owner"]) => void;
   mintMode: AccessMode;
   setMintMode: (mode: AccessMode) => void;
-  mintAsset: () => void;
+  mintAsset: () => void | Promise<void>;
   accessRequester: AccessRequest["requester"];
   setAccessRequester: (requester: AccessRequest["requester"]) => void;
-  evaluateAccess: () => void;
+  evaluateAccess: () => void | Promise<void>;
   accessRequests: AccessRequest[];
   transferTo: AssetRecord["owner"];
   setTransferTo: (owner: AssetRecord["owner"]) => void;
   transfers: TransferRecord[];
-  createTransfer: () => void;
-  advanceTransfer: (id: string) => void;
+  createTransfer: () => void | Promise<void>;
+  advanceTransfer: (id: string) => void | Promise<void>;
   receipts: ReceiptRecord[];
   policies: PolicyRecord[];
-  togglePolicy: (id: AccessMode) => void;
+  togglePolicy: (id: AccessMode) => void | Promise<void>;
   wallets: WalletRecord[];
   walletLabel: string;
   setWalletLabel: (value: string) => void;
@@ -881,14 +953,16 @@ type PageProps = {
   walletIdentity: WalletRecord["identity"];
   setWalletIdentity: (value: WalletRecord["identity"]) => void;
   walletIntent: string;
-  addWallet: () => void;
+  addWallet: () => void | Promise<void>;
   detectProvider: () => void;
   refreshWalletUtxos: (walletId: string) => void;
   prepareWalletIntent: (walletId: string) => void;
-  updateAssetStatus: (id: string, status: AssetStatus) => void;
-  generateProof: () => void;
+  updateAssetStatus: (id: string, status: AssetStatus) => void | Promise<void>;
+  generateProof: () => void | Promise<void>;
   proofBundle: string;
-  resetSimulation: () => void;
+  verifyLatestReceipt: () => void | Promise<void>;
+  receiptVerification: string;
+  resetSimulation: () => void | Promise<void>;
   apiStatus: "Connecting" | "API synced" | "Browser local";
   audit: AuditRecord[];
   setPage: (page: Page) => void;
@@ -1191,7 +1265,7 @@ function TransfersPage({ selectedAsset, transferTo, setTransferTo, transfers, cr
   );
 }
 
-function ReceiptsPage({ receipts, generateProof, proofBundle }: PageProps) {
+function ReceiptsPage({ receipts, generateProof, proofBundle, verifyLatestReceipt, receiptVerification }: PageProps) {
   return (
     <section className="page-grid">
       <Panel title="Receipts & Proofs" icon={<FileCheck2 size={18} />} className="wide-panel">
@@ -1210,6 +1284,11 @@ function ReceiptsPage({ receipts, generateProof, proofBundle }: PageProps) {
           Generate Proof Bundle
           <ExternalLink size={16} />
         </button>
+        <button className="secondary-action" onClick={verifyLatestReceipt}>
+          Verify Signed Receipt
+          <BadgeCheck size={16} />
+        </button>
+        {receiptVerification && <pre className="proof-box">{receiptVerification}</pre>}
         {proofBundle && <pre className="proof-box">{proofBundle}</pre>}
       </Panel>
     </section>

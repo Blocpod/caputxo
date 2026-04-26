@@ -195,6 +195,72 @@ createServer(async (req, res) => {
       await writeState(state);
       return send(res, 201, { ok: true, transfer, state });
     }
+    if (req.url?.startsWith("/api/assets/") && req.url.endsWith("/status") && req.method === "POST") {
+      const assetId = req.url.split("/")[3];
+      const body = await readBody(req);
+      const state = await readState();
+      const asset = state.assets.find((item) => item.id === assetId);
+      if (!asset) return send(res, 404, { ok: false, reason: "asset_not_found" });
+      if (!["Active", "Pending", "Frozen"].includes(body.status)) return send(res, 400, { ok: false, reason: "invalid_status" });
+      asset.status = body.status;
+      await addReceipt(state, { kind: "Asset Status Updated", assetId, subject: asset.status, ok: asset.status !== "Frozen", policy: asset.mode, trace: `asset status set to ${asset.status}` });
+      addAudit(state, "Asset Status Updated", "Controller", assetId, "Updated");
+      await writeState(state);
+      return send(res, 200, { ok: true, asset, state });
+    }
+    if (req.url?.startsWith("/api/policies/") && req.url.endsWith("/toggle") && req.method === "POST") {
+      const policyId = decodeURIComponent(req.url.split("/")[3]);
+      const state = await readState();
+      const policy = state.policies.find((item) => item.id === policyId);
+      if (!policy) return send(res, 404, { ok: false, reason: "policy_not_found" });
+      policy.state = policy.state === "Active" ? "Paused" : "Active";
+      await addReceipt(state, { kind: "Policy Updated", assetId: state.selectedAssetId, subject: policy.id, ok: true, policy: policy.id, trace: `policy state set to ${policy.state}` });
+      addAudit(state, "Policy Updated", "Controller", policy.id, "Updated");
+      await writeState(state);
+      return send(res, 200, { ok: true, policy, state });
+    }
+    if (req.url === "/api/receipts/proof" && req.method === "POST") {
+      const body = await readBody(req);
+      const state = await readState();
+      const asset = state.assets.find((item) => item.id === body.assetId) ?? state.assets.find((item) => item.id === state.selectedAssetId);
+      if (!asset) return send(res, 404, { ok: false, reason: "asset_not_found" });
+      const proof = {
+        generatedAt: nowLabel(),
+        network: "BSV Testnet",
+        selectedAsset: asset.id,
+        assetHash: asset.hash,
+        currentOutpoint: asset.outpoint,
+        currentOwner: asset.owner,
+        epoch: asset.epoch,
+        receipts: state.receipts.filter((receipt) => receipt.assetId === asset.id).slice(0, 8),
+      };
+      const proofBundle = JSON.stringify(proof, null, 2);
+      state.proofBundle = proofBundle;
+      await addReceipt(state, { kind: "Proof Generated", assetId: asset.id, subject: asset.name, ok: true, policy: asset.mode, trace: "proof bundle assembled" });
+      addAudit(state, "Proof Generated", "Controller", asset.id, "Recorded");
+      await writeState(state);
+      return send(res, 200, { ok: true, proof, proofBundle, state });
+    }
+    if (req.url === "/api/wallets" && req.method === "POST") {
+      const body = await readBody(req);
+      const state = await readState();
+      if (!/^[a-zA-Z0-9]{20,100}$/.test(body.address ?? "")) return send(res, 400, { ok: false, reason: "valid_address_required" });
+      const wallet = {
+        id: randomId("wallet"),
+        label: body.label || `${body.identity ?? "Alice"} wallet`,
+        address: body.address,
+        network: body.network || "BSV Testnet",
+        identity: body.identity || "Alice",
+        mode: "Watch Only",
+        status: "Ready",
+        lastChecked: "Never",
+        utxos: [],
+      };
+      state.wallets = [wallet, ...(state.wallets ?? [])];
+      addAudit(state, "Wallet Added", wallet.identity, wallet.address, "Recorded");
+      await writeState(state);
+      return send(res, 201, { ok: true, wallet, state });
+    }
     if (req.url?.startsWith("/api/transfers/") && req.url.endsWith("/advance") && req.method === "POST") {
       const transferId = req.url.split("/")[3];
       const state = await readState();
