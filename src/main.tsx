@@ -553,7 +553,9 @@ function App() {
               <Bell size={18} />
             </button>
             <button className="profile">
-              <img src="/caputxo-reference.png" alt="" />
+              <span className="profile-avatar" aria-hidden="true">
+                <User size={18} />
+              </span>
               <span>
                 <strong>Alice</strong>
                 <small>Controller</small>
