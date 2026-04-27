@@ -6,8 +6,15 @@ CapUTXO Control Center is a full-stack prototype for managing transferable crypt
 
 The app is built as a production-style control center with a React dashboard, an API-backed state gateway, receipt/proof workflows, transfer pipelines, policy controls, identity/key views, and audit logging.
 
+## UI Reference
+
+The image below is the original visual mockup used as design inspiration for the control center. It is included here for product/design context only; the running app recreates the interface with React components and CSS rather than using this image as an in-app background.
+
+![CapUTXO control center UI mockup](public/caputxo-reference.png)
+
 ## Table of Contents
 
+- [UI Reference](#ui-reference)
 - [Why CapUTXO](#why-caputxo)
 - [Current Status](#current-status)
 - [Features](#features)
@@ -449,8 +456,8 @@ Until a production backend is deployed, the hosted frontend will use browser-loc
 
 ## Development Notes
 
-- The UI mockup reference image is not used in the app UI. The design is recreated with CSS and components.
-- `public/caputxo-reference.png` and `public/og-caputxo.png` are legacy local assets and are not referenced by the app.
+- The UI mockup reference image is used in this README for design context only. It is not used in the app UI.
+- The app design is recreated with CSS and components.
 - The app uses Lucide icons.
 - The visual style intentionally favors dense operational surfaces over a marketing landing page.
 - The local API writes only to `data/caputxo-state.json`.
